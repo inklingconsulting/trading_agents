@@ -19,6 +19,7 @@ from agents.news_agent import NewsAgent
 from core.config import settings
 from core.message_bus import MessageBus
 from core.models import AgentMessage, AlertPriority, ChartAction, ChartAlert, NewsAlert
+from core.notifier import notify
 
 
 class Orchestrator:
@@ -39,12 +40,19 @@ class Orchestrator:
     async def _on_news_alert(self, msg: AgentMessage) -> None:
         alert = NewsAlert(**msg.payload)
         priority_tag = {"high": "[!!!]", "medium": "[!]", "low": "[ ]"}.get(alert.priority.value, "")
+        pct_str = f" {alert.premarket_change_pct:+.1f}%" if alert.premarket_change_pct is not None else ""
         print(
-            f"\n{priority_tag} [NEWS] {alert.ticker} ${alert.price or '?'} "
+            f"\n{priority_tag} [NEWS] {alert.ticker} ${alert.price or '?'}{pct_str} "
             f"| {alert.headline[:80]}"
         )
-        if alert.premarket_change_pct is not None:
-            print(f"   Pre-market: {alert.premarket_change_pct:+.1f}%")
+
+        ntfy_priority = {"high": "high", "medium": "default", "low": "low"}.get(alert.priority.value, "default")
+        notify(
+            title=f"[NEWS] {alert.ticker}{pct_str}",
+            message=alert.headline[:200],
+            priority=ntfy_priority,
+            tags=["newspaper"],
+        )
 
         if alert.priority in (AlertPriority.HIGH, AlertPriority.MEDIUM):
             await self._maybe_trigger_chart(alert.ticker, alert.headline)
@@ -79,12 +87,33 @@ class Orchestrator:
         if alert.rules_triggered:
             print(f"   Rules: {', '.join(alert.rules_triggered)}")
 
+        ntfy_priority = "high" if alert.action in (ChartAction.BUY, ChartAction.SELL) else "low"
+        tags = {
+            ChartAction.BUY: ["chart_increasing", "green_circle"],
+            ChartAction.SELL: ["chart_decreasing", "red_circle"],
+            ChartAction.WATCH: ["eyes"],
+            ChartAction.HOLD: ["pause_button"],
+        }.get(alert.action, [])
+        entry_str = f" | Entry ${alert.entry_price}" if alert.entry_price else ""
+        notify(
+            title=f"[{alert.action.value.upper()}] {alert.ticker} ({alert.strength.value})",
+            message=alert.rationale[:200] + entry_str,
+            priority=ntfy_priority,
+            tags=tags,
+        )
+
         if settings.execution_enabled and alert.action in (ChartAction.BUY, ChartAction.SELL):
             print("   [Orchestrator] Execution enabled — forwarding to trading agent (not yet wired)")
 
     async def run(self) -> None:
         print("[Orchestrator] Starting all agents...")
         print(f"[Orchestrator] Execution mode: {'ENABLED' if settings.execution_enabled else 'DISABLED (safe mode)'}")
+        notify(
+            title="Trading Agents Started",
+            message=f"Execution: {'ENABLED' if settings.execution_enabled else 'disabled (safe mode)'}",
+            priority="low",
+            tags=["robot"],
+        )
 
         await asyncio.gather(
             self._bus.run(),

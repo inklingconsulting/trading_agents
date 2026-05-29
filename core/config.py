@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # TradingView MCP server (Node.js)
     tradingview_mcp_path: str = r"C:\_repo\tradingview_mcp_jackson"
 
+    # Notifications
+    ntfy_topic: str = ""   # set to enable phone push via ntfy.sh (e.g. "my-trading-alerts")
+
     # News agent watchlist criteria
     news_max_price: float = 20.0          # max stock price to consider
     news_max_float_m: float = 20.0        # max float in millions (0 = no limit)
@@ -36,7 +39,7 @@ class Settings(BaseSettings):
     news_scan_start_hour: int = 7         # 24h EST (7 = 7:00 AM)
     news_scan_end_hour: int = 9           # 9 = up to 9:30 AM (30 min buffer in agent)
     news_scan_end_minute: int = 30
-    news_poll_interval_sec: int = 60      # how often to scan
+    news_poll_interval_sec: int = 300     # how often to scan (5 min default)
 
     # Watchlist: comma-separated tickers for the chart agent to monitor
     watchlist: str = ""

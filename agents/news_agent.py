@@ -65,8 +65,13 @@ class NewsAgent(BaseAgent):
             scan_end = time(settings.news_scan_end_hour, settings.news_scan_end_minute)
 
             if scan_start <= now.time() <= scan_end:
+                print(f"[NewsAgent] Scanning {len(self._get_tickers())} tickers at {now.strftime('%H:%M')} EST...")
                 try:
                     alerts = await self._scan()
+                    if alerts:
+                        print(f"[NewsAgent] {len(alerts)} alert(s) found")
+                    else:
+                        print("[NewsAgent] No qualifying alerts this scan")
                     for alert in alerts:
                         msg = AgentMessage(
                             topic="news",
@@ -74,11 +79,20 @@ class NewsAgent(BaseAgent):
                             payload=alert.model_dump(),
                         )
                         await self._bus.publish(msg)
-                        print(f"[NewsAgent] Alert: {alert.ticker} — {alert.headline[:60]}")
+                        print(f"[NewsAgent] Alert: {alert.ticker} [{alert.priority.value}] {alert.headline[:60]}")
                 except Exception as exc:
                     print(f"[NewsAgent] Scan error: {exc}")
             else:
-                print(f"[NewsAgent] Outside scan window ({now.strftime('%H:%M')} EST), sleeping...")
+                # Show when the scan window opens next
+                from datetime import date, timedelta
+                window_open = datetime.combine(date.today(), scan_start).replace(tzinfo=EST)
+                if now.time() > scan_end:
+                    window_open += timedelta(days=1)
+                mins_until = int((window_open - now).total_seconds() / 60)
+                print(
+                    f"[NewsAgent] Outside scan window ({now.strftime('%H:%M')} EST) "
+                    f"- window opens in {mins_until}m at {window_open.strftime('%H:%M')} EST"
+                )
 
             await asyncio.sleep(settings.news_poll_interval_sec)
 
