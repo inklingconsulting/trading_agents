@@ -166,10 +166,10 @@ class NewsAgent(BaseAgent):
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=2048,
-                betas=["web-search-2025-03-05"],
                 system=system,
                 tools=[_WEB_SEARCH_TOOL],
                 messages=[{"role": "user", "content": user_msg}],
+                extra_headers={"anthropic-beta": "web-search-2025-03-05"},
             )
         except anthropic.BadRequestError:
             # Fallback: no web search, just return raw candidates as low-priority alerts

@@ -136,10 +136,10 @@ class DiscoveryAgent(BaseAgent):
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
-                betas=["web-search-2025-03-05"],
                 system=system,
                 tools=[_WEB_SEARCH_TOOL],
                 messages=messages,
+                extra_headers={"anthropic-beta": "web-search-2025-03-05"},
             )
         except Exception as exc:
             print(f"[DiscoveryAgent] Claude search failed: {exc}")
