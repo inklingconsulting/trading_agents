@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # Watchlist: comma-separated tickers for the chart agent to monitor
     watchlist: str = ""
 
+    # Chart agent
+    chart_model: str = "claude-sonnet-4-6"
+    chart_fallback_poll_sec: int = 300      # poll interval when no news trigger fires
+    chart_trigger_cooldown_sec: int = 300   # min seconds between triggers for the same ticker
+
     # Agent execution guard (False = no real orders placed)
     execution_enabled: bool = False
 

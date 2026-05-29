@@ -18,7 +18,7 @@ from platforms.tradingview import TradingViewClient
 
 
 async def run_orchestrator(chart_poll: int) -> None:
-    orch = Orchestrator(chart_poll_interval=chart_poll)
+    orch = Orchestrator(chart_fallback_poll=chart_poll)
 
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -58,7 +58,7 @@ if __name__ == "__main__":
 
     # Multi-agent orchestrator
     orch_p = sub.add_parser("run", help="Start full multi-agent orchestrator")
-    orch_p.add_argument("--chart-poll", type=int, default=30, help="Chart polling interval in seconds")
+    orch_p.add_argument("--chart-poll", type=int, default=300, help="Chart fallback poll interval in seconds (default 300; chart normally runs on news triggers)")
 
     # Legacy single-ticker analysis
     single_p = sub.add_parser("analyze", help="Analyze a single ticker (legacy)")

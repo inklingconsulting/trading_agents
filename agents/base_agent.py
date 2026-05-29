@@ -5,7 +5,7 @@ import anthropic
 
 from core.config import settings
 
-DEFAULT_MODEL = "claude-opus-4-7"
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 
 class BaseAgent:

@@ -1,15 +1,15 @@
 """Chart agent: reads TradingView data via MCP and generates buy/sell alerts.
 
-Uses the mcp Python library to spawn the tradingview_mcp_jackson Node.js server
-via stdio and run a Claude tool-use loop against its 68 TradingView tools.
-Publishes ChartAlert messages to the bus on topic "chart".
+Trigger-driven: waits for "chart_trigger" messages published by the Orchestrator
+when the NewsAgent finds a medium/high-priority catalyst. Falls back to a long
+periodic poll (chart_fallback_poll_sec, default 5 min) as a heartbeat.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 
-from agents.base_agent import BaseAgent, DEFAULT_MODEL
+from agents.base_agent import BaseAgent
 from core.config import settings
 from core.message_bus import MessageBus
 from core.models import AgentMessage, AlertPriority, ChartAction, ChartAlert, SignalStrength
@@ -19,11 +19,12 @@ _SYSTEM = """\
 You are a technical analysis agent connected to a live TradingView chart via tools.
 
 Your job:
-1. Call chart_get_state to identify the current symbol and indicators
-2. Call data_get_study_values for indicator readings (RSI, MACD, EMA, etc.)
-3. Call data_get_pine_lines and data_get_pine_labels for key price levels
-4. Call quote_get for the current price
-5. Evaluate the rules provided and decide: buy / sell / watch / hold
+1. If a specific ticker is provided, call chart_set_symbol to switch to it first
+2. Call chart_get_state to identify the current symbol and indicators
+3. Call data_get_study_values for indicator readings (RSI, MACD, EMA, etc.)
+4. Call data_get_pine_lines and data_get_pine_labels for key price levels
+5. Call quote_get for the current price
+6. Evaluate the rules provided and decide: buy / sell / watch / hold
 
 Rules to apply:
 {rules}
@@ -37,14 +38,20 @@ Return ONLY the JSON object, no prose.
 
 
 class ChartAgent(BaseAgent):
-    """Analyzes TradingView charts via MCP tools and emits ChartAlerts."""
+    """Analyzes TradingView charts via MCP tools and emits ChartAlerts.
 
-    def __init__(self, bus: MessageBus, poll_interval: int = 30, model: str = DEFAULT_MODEL):
-        super().__init__(model=model)
+    Waits for chart_trigger messages from the bus. Falls back to a periodic
+    poll (fallback_poll_sec) as a heartbeat when no trigger arrives.
+    """
+
+    def __init__(self, bus: MessageBus, fallback_poll_sec: int | None = None, model: str | None = None):
+        super().__init__(model=model or settings.chart_model)
         self._bus = bus
-        self._poll_interval = poll_interval
+        self._fallback_poll_sec = fallback_poll_sec or settings.chart_fallback_poll_sec
         self._running = False
         self._rules = self._load_rules()
+        self._trigger_queue: asyncio.Queue = asyncio.Queue()
+        self._bus.subscribe("chart_trigger", self._on_trigger)
 
     def _load_rules(self) -> str:
         rules_path = settings.mcp_server_path() / "rules.json"
@@ -52,16 +59,35 @@ class ChartAgent(BaseAgent):
             return rules_path.read_text(encoding="utf-8")
         return "No rules configured — use general technical analysis best practices."
 
+    async def _on_trigger(self, msg: AgentMessage) -> None:
+        await self._trigger_queue.put(msg.payload)
+
     async def run(self) -> None:
         self._running = True
         if not check_mcp_server_available():
             print("[ChartAgent] TradingView MCP server not available — stopping.")
             return
 
-        print(f"[ChartAgent] Started - polling chart every {self._poll_interval}s")
+        print(
+            f"[ChartAgent] Started - trigger-driven "
+            f"(fallback poll every {self._fallback_poll_sec}s, model: {self.model})"
+        )
         while self._running:
+            ticker: str | None = None
+            headline: str = ""
             try:
-                alert = await self._analyze_chart()
+                payload = await asyncio.wait_for(
+                    self._trigger_queue.get(),
+                    timeout=self._fallback_poll_sec,
+                )
+                ticker = payload.get("ticker")
+                headline = payload.get("headline", "")
+                print(f"[ChartAgent] Triggered: {ticker} | {headline[:60]}")
+            except asyncio.TimeoutError:
+                print("[ChartAgent] Fallback poll - analyzing current chart")
+
+            try:
+                alert = await self._analyze_chart(ticker=ticker, headline=headline)
                 if alert:
                     msg = AgentMessage(
                         topic="chart",
@@ -73,17 +99,21 @@ class ChartAgent(BaseAgent):
             except Exception as exc:
                 print(f"[ChartAgent] Analysis error: {exc}")
 
-            await asyncio.sleep(self._poll_interval)
-
     def stop(self) -> None:
         self._running = False
 
-    async def _analyze_chart(self) -> ChartAlert | None:
+    async def _analyze_chart(self, ticker: str | None = None, headline: str = "") -> ChartAlert | None:
         system = _SYSTEM.format(rules=self._rules)
-        messages = [
-            {"role": "user", "content": "Analyze the current TradingView chart and produce a trading alert."}
-        ]
+        if ticker:
+            user_content = (
+                f"News catalyst detected for {ticker}. "
+                + (f'Headline: "{headline}" ' if headline else "")
+                + f"Switch the TradingView chart to {ticker} and produce a trading alert."
+            )
+        else:
+            user_content = "Analyze the current TradingView chart and produce a trading alert."
 
+        messages = [{"role": "user", "content": user_content}]
         raw = await run_with_tv_tools(self.client, self.model, system, messages)
 
         try:
@@ -98,7 +128,7 @@ class ChartAgent(BaseAgent):
 
         try:
             return ChartAlert(
-                ticker=data.get("ticker", "UNKNOWN"),
+                ticker=data.get("ticker", ticker or "UNKNOWN"),
                 action=ChartAction(data.get("action", "watch")),
                 strength=SignalStrength(data.get("strength", "moderate")),
                 entry_price=data.get("entry_price"),

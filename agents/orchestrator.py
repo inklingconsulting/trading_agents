@@ -1,29 +1,35 @@
 """Orchestrator: boots all agents and routes inter-agent messages.
 
 Message flow:
-  NewsAgent  ──"news"──► Orchestrator ──► prints alert (+ future: chart agent enrichment)
-  ChartAgent ──"chart"─► Orchestrator ──► prints alert (+ future: execution agent gating)
+  NewsAgent  --"news"--> Orchestrator --> prints alert
+                                      --> publishes "chart_trigger" if priority >= medium
+                                          (with per-ticker cooldown)
+  ChartAgent --"chart"--> Orchestrator --> prints alert
+                                       --> execution agent (not yet wired)
 
 Execution is disabled by default (settings.execution_enabled = False).
-When enabled in the future, the orchestrator will forward buy/sell ChartAlerts
-to TradingAgent → WebullBroker.
 """
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta
 
 from agents.chart_agent import ChartAgent
 from agents.news_agent import NewsAgent
 from core.config import settings
 from core.message_bus import MessageBus
-from core.models import AgentMessage, ChartAction, ChartAlert, NewsAlert
+from core.models import AgentMessage, AlertPriority, ChartAction, ChartAlert, NewsAlert
 
 
 class Orchestrator:
-    def __init__(self, chart_poll_interval: int = 30):
+    def __init__(self, chart_fallback_poll: int | None = None):
         self._bus = MessageBus()
         self._news_agent = NewsAgent(bus=self._bus)
-        self._chart_agent = ChartAgent(bus=self._bus, poll_interval=chart_poll_interval)
+        self._chart_agent = ChartAgent(
+            bus=self._bus,
+            fallback_poll_sec=chart_fallback_poll,
+        )
+        self._last_chart_trigger: dict[str, datetime] = {}
         self._setup_subscriptions()
 
     def _setup_subscriptions(self) -> None:
@@ -40,6 +46,27 @@ class Orchestrator:
         if alert.premarket_change_pct is not None:
             print(f"   Pre-market: {alert.premarket_change_pct:+.1f}%")
 
+        if alert.priority in (AlertPriority.HIGH, AlertPriority.MEDIUM):
+            await self._maybe_trigger_chart(alert.ticker, alert.headline)
+
+    async def _maybe_trigger_chart(self, ticker: str, headline: str) -> None:
+        now = datetime.utcnow()
+        last = self._last_chart_trigger.get(ticker)
+        cooldown = timedelta(seconds=settings.chart_trigger_cooldown_sec)
+        if last is not None and (now - last) < cooldown:
+            remaining = int((cooldown - (now - last)).total_seconds())
+            print(f"   [Orchestrator] Chart trigger skipped for {ticker} (cooldown: {remaining}s remaining)")
+            return
+
+        self._last_chart_trigger[ticker] = now
+        trigger = AgentMessage(
+            topic="chart_trigger",
+            from_agent="orchestrator",
+            payload={"ticker": ticker, "headline": headline},
+        )
+        await self._bus.publish(trigger)
+        print(f"   [Orchestrator] Chart analysis triggered for {ticker}")
+
     async def _on_chart_alert(self, msg: AgentMessage) -> None:
         alert = ChartAlert(**msg.payload)
         action_tag = {"buy": "[BUY]", "sell": "[SELL]", "watch": "[WATCH]", "hold": "[HOLD]"}.get(alert.action.value, "")
@@ -54,7 +81,6 @@ class Orchestrator:
 
         if settings.execution_enabled and alert.action in (ChartAction.BUY, ChartAction.SELL):
             print("   [Orchestrator] Execution enabled — forwarding to trading agent (not yet wired)")
-            # TODO: forward to TradingAgent when ready
 
     async def run(self) -> None:
         print("[Orchestrator] Starting all agents...")
