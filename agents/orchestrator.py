@@ -32,9 +32,9 @@ class Orchestrator:
 
     async def _on_news_alert(self, msg: AgentMessage) -> None:
         alert = NewsAlert(**msg.payload)
-        priority_emoji = {"high": "🔴", "medium": "🟡", "low": "⚪"}.get(alert.priority.value, "")
+        priority_tag = {"high": "[!!!]", "medium": "[!]", "low": "[ ]"}.get(alert.priority.value, "")
         print(
-            f"\n{priority_emoji} [NEWS] {alert.ticker} ${alert.price or '?'} "
+            f"\n{priority_tag} [NEWS] {alert.ticker} ${alert.price or '?'} "
             f"| {alert.headline[:80]}"
         )
         if alert.premarket_change_pct is not None:
@@ -42,9 +42,9 @@ class Orchestrator:
 
     async def _on_chart_alert(self, msg: AgentMessage) -> None:
         alert = ChartAlert(**msg.payload)
-        action_emoji = {"buy": "📈", "sell": "📉", "watch": "👀", "hold": "⏸"}.get(alert.action.value, "")
+        action_tag = {"buy": "[BUY]", "sell": "[SELL]", "watch": "[WATCH]", "hold": "[HOLD]"}.get(alert.action.value, "")
         print(
-            f"\n{action_emoji} [CHART] {alert.ticker} → {alert.action.value.upper()} "
+            f"\n{action_tag} [CHART] {alert.ticker} -> {alert.action.value.upper()} "
             f"({alert.strength.value}) | {alert.rationale[:80]}"
         )
         if alert.entry_price:

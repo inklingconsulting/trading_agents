@@ -57,7 +57,7 @@ class NewsAgent(BaseAgent):
     async def run(self) -> None:
         """Loop until stop() is called, scanning during configured market hours."""
         self._running = True
-        print("[NewsAgent] Started — scanning pre-market movers")
+        print("[NewsAgent] Started - scanning pre-market movers")
 
         while self._running:
             now = datetime.now(tz=EST)

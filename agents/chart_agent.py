@@ -58,7 +58,7 @@ class ChartAgent(BaseAgent):
             print("[ChartAgent] TradingView MCP server not available — stopping.")
             return
 
-        print(f"[ChartAgent] Started — polling chart every {self._poll_interval}s")
+        print(f"[ChartAgent] Started - polling chart every {self._poll_interval}s")
         while self._running:
             try:
                 alert = await self._analyze_chart()
@@ -69,7 +69,7 @@ class ChartAgent(BaseAgent):
                         payload=alert.model_dump(),
                     )
                     await self._bus.publish(msg)
-                    print(f"[ChartAgent] Alert: {alert.ticker} → {alert.action.value} ({alert.strength.value})")
+                    print(f"[ChartAgent] Alert: {alert.ticker} -> {alert.action.value} ({alert.strength.value})")
             except Exception as exc:
                 print(f"[ChartAgent] Analysis error: {exc}")
 
