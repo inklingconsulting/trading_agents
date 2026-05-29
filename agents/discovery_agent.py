@@ -35,7 +35,7 @@ _WEB_SEARCH_TOOL = {
     "name": "web_search",
 }
 
-_SYSTEM = f"""\
+_SYSTEM = """\
 You are acting as Ross Cameron from Warrior Trading — a professional small-cap day trader.
 Every morning you run a pre-market scan to find the best day-trading setups.
 
@@ -72,8 +72,8 @@ Return ONLY a JSON array with this exact shape (no prose, no markdown fences):
   }}
 ]
 
-Today's date: {{date}}
-Current time: {{time}} EST
+Today's date: {date}
+Current time: {time} EST
 """
 
 
