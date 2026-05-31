@@ -1,0 +1,297 @@
+// @version=5
+// ─────────────────────────────────────────────────────────────────────────────
+// RC Setup Scanner — Ross Cameron / Warrior Trading Style
+// ─────────────────────────────────────────────────────────────────────────────
+// Draws and tracks key intraday levels:
+//   PDH / PDL  — Previous Day High / Low
+//   PMH / PML  — Pre-Market High / Low (extended hours)
+//   ORH / ORL  — Opening Range High / Low (configurable window)
+//   VWAP       — Volume Weighted Average Price
+//
+// Detects Ross Cameron breakout setups and logs them in a status table.
+// The table is readable by the trading-agents MCP watcher via data_get_pine_tables.
+//
+// ALERT CONDITIONS (set in TradingView Alerts panel):
+//   "ORB Breakout"  — price closes above ORH with volume
+//   "PMH Breakout"  — price closes above pre-market high
+//   "PDH Breakout"  — price closes above previous day high
+//   "VWAP Reclaim"  — price crosses back above VWAP
+//   "ORB Breakdown" — price closes below ORL with volume (short/exit signal)
+// ─────────────────────────────────────────────────────────────────────────────
+
+indicator("RC Setup Scanner", shorttitle="RC Scanner", overlay=true,
+          max_lines_count=20, max_labels_count=50)
+
+// ── Inputs ────────────────────────────────────────────────────────────────────
+i_or_min   = input.int(5,   "Opening Range (minutes)", minval=1, maxval=30, group="Settings")
+i_vol_mult = input.float(1.5, "High Volume Threshold (× avg)", minval=1.0, step=0.1, group="Settings")
+i_show_pd  = input.bool(true, "Show Previous Day Levels", group="Display")
+i_show_pm  = input.bool(true, "Show Pre-Market Levels",   group="Display")
+i_show_or  = input.bool(true, "Show Opening Range",        group="Display")
+i_show_vwap= input.bool(true, "Show VWAP",                group="Display")
+i_show_9e  = input.bool(true, "Show 9 EMA",               group="Display")
+
+// ── Colors ────────────────────────────────────────────────────────────────────
+c_pdh  = #FF4444   // red
+c_pdl  = #44FF44   // green
+c_pmh  = #FF9900   // orange
+c_pml  = #00BBBB   // teal
+c_orh  = #CC44FF   // purple
+c_orl  = #4488FF   // blue
+c_vwap = #FFEE00   // yellow
+c_ema9 = #FF8800   // orange
+
+// ── Previous Day High / Low ───────────────────────────────────────────────────
+pdh = request.security(syminfo.tickerid, "D", high[1])
+pdl = request.security(syminfo.tickerid, "D", low[1])
+
+// ── Pre-Market High / Low ─────────────────────────────────────────────────────
+var float pmh_tracking = na
+var float pml_tracking = na
+var float pmh_final    = na
+var float pml_final    = na
+
+if session.isfirstbar_regular
+    pmh_final    := na(pmh_tracking) ? open : pmh_tracking
+    pml_final    := na(pml_tracking) ? open : pml_tracking
+    pmh_tracking := na
+    pml_tracking := na
+
+if session.ispremarket
+    pmh_tracking := na(pmh_tracking) ? high : math.max(pmh_tracking, high)
+    pml_tracking := na(pml_tracking) ? low  : math.min(pml_tracking, low)
+
+pmh = session.ispremarket ? pmh_tracking : pmh_final
+pml = session.ispremarket ? pml_tracking : pml_final
+
+// ── Opening Range ─────────────────────────────────────────────────────────────
+var float orh        = na
+var float orl        = na
+var int   or_start   = 0
+var bool  or_locked  = false
+
+if session.isfirstbar_regular
+    or_start  := bar_index
+    orh       := high
+    orl       := low
+    or_locked := false
+
+if session.ismarket and not or_locked
+    bars_in = bar_index - or_start
+    if bars_in < i_or_min
+        orh := math.max(orh, high)
+        orl := math.min(orl, low)
+    else
+        or_locked := true
+
+// ── VWAP ──────────────────────────────────────────────────────────────────────
+vwap_val = ta.vwap(hlc3)
+
+// ── 9 EMA ─────────────────────────────────────────────────────────────────────
+ema9 = ta.ema(close, 9)
+
+// ── Volume Context ────────────────────────────────────────────────────────────
+vol_avg    = ta.sma(volume, 20)
+high_vol   = volume >= vol_avg * i_vol_mult
+rel_vol    = vol_avg > 0 ? math.round(volume / vol_avg * 10) / 10 : 0.0
+
+// ── Signal Detection (fires once per bar) ────────────────────────────────────
+orb_breakout  = session.ismarket and or_locked and ta.crossover(close, orh)  and high_vol
+pmh_breakout  = session.ismarket and ta.crossover(close, pmh)                and high_vol
+pdh_breakout  = session.ismarket and ta.crossover(close, pdh)                and high_vol
+vwap_reclaim  = session.ismarket and ta.crossover(close, vwap_val)           and high_vol
+orb_breakdown = session.ismarket and or_locked and ta.crossunder(close, orl) and high_vol
+
+// Track which signals have fired today ────────────────────────────────────────
+var bool fired_orb  = false
+var bool fired_pmh  = false
+var bool fired_pdh  = false
+var bool fired_vwap = false
+var bool fired_down = false
+
+if session.isfirstbar_regular
+    fired_orb  := false
+    fired_pmh  := false
+    fired_pdh  := false
+    fired_vwap := false
+    fired_down := false
+
+if orb_breakout,   fired_orb  := true
+if pmh_breakout,   fired_pmh  := true
+if pdh_breakout,   fired_pdh  := true
+if vwap_reclaim,   fired_vwap := true
+if orb_breakdown,  fired_down := true
+
+// ── Signal Labels on Chart ───────────────────────────────────────────────────
+if orb_breakout
+    label.new(bar_index, low, "ORB\nBREAK", yloc=yloc.belowbar,
+              style=label.style_label_up, color=color.new(c_orh, 10),
+              textcolor=color.white, size=size.small)
+
+if pmh_breakout
+    label.new(bar_index, low, "PMH\nBREAK", yloc=yloc.belowbar,
+              style=label.style_label_up, color=color.new(c_pmh, 10),
+              textcolor=color.white, size=size.small)
+
+if pdh_breakout
+    label.new(bar_index, low, "PDH\nBREAK", yloc=yloc.belowbar,
+              style=label.style_label_up, color=color.new(c_pdh, 10),
+              textcolor=color.white, size=size.small)
+
+if vwap_reclaim
+    label.new(bar_index, low, "VWAP\nRECLAIM", yloc=yloc.belowbar,
+              style=label.style_label_up, color=color.new(c_vwap, 10),
+              textcolor=color.black, size=size.small)
+
+if orb_breakdown
+    label.new(bar_index, high, "ORB\nBREAKDN", yloc=yloc.abovebar,
+              style=label.style_label_down, color=color.new(c_pdh, 10),
+              textcolor=color.white, size=size.small)
+
+// ── Level Lines ───────────────────────────────────────────────────────────────
+var line l_pdh = na, var line l_pdl = na
+var line l_pmh = na, var line l_pml = na
+var line l_orh = na, var line l_orl = na
+
+f_update_line(ln, y, col, w, sty) =>
+    if na(ln)
+        line.new(bar_index - 100, y, bar_index, y,
+                 extend=extend.right, color=col, width=w, style=sty)
+    else
+        line.set_y1(ln, y)
+        line.set_y2(ln, y)
+        ln
+
+if barstate.islast
+    if i_show_pd and not na(pdh)
+        l_pdh := f_update_line(l_pdh, pdh, c_pdh, 2, line.style_solid)
+        l_pdl := f_update_line(l_pdl, pdl, c_pdl, 2, line.style_solid)
+        label.new(bar_index + 2, pdh, "PDH " + str.tostring(pdh, "#.00"),
+                  xloc=xloc.bar_index, style=label.style_label_left,
+                  color=c_pdh, textcolor=color.white, size=size.small)
+        label.new(bar_index + 2, pdl, "PDL " + str.tostring(pdl, "#.00"),
+                  xloc=xloc.bar_index, style=label.style_label_left,
+                  color=c_pdl, textcolor=color.white, size=size.small)
+
+    if i_show_pm and not na(pmh)
+        l_pmh := f_update_line(l_pmh, pmh, c_pmh, 1, line.style_dashed)
+        l_pml := f_update_line(l_pml, pml, c_pml, 1, line.style_dashed)
+        label.new(bar_index + 2, pmh, "PMH " + str.tostring(pmh, "#.00"),
+                  xloc=xloc.bar_index, style=label.style_label_left,
+                  color=c_pmh, textcolor=color.white, size=size.small)
+        label.new(bar_index + 2, pml, "PML " + str.tostring(pml, "#.00"),
+                  xloc=xloc.bar_index, style=label.style_label_left,
+                  color=c_pml, textcolor=color.white, size=size.small)
+
+    if i_show_or and not na(orh)
+        l_orh := f_update_line(l_orh, orh, c_orh, 1, line.style_dotted)
+        l_orl := f_update_line(l_orl, orl, c_orl, 1, line.style_dotted)
+        label.new(bar_index + 2, orh, "ORH " + str.tostring(orh, "#.00"),
+                  xloc=xloc.bar_index, style=label.style_label_left,
+                  color=c_orh, textcolor=color.white, size=size.small)
+        label.new(bar_index + 2, orl, "ORL " + str.tostring(orl, "#.00"),
+                  xloc=xloc.bar_index, style=label.style_label_left,
+                  color=c_orl, textcolor=color.white, size=size.small)
+
+// ── VWAP + 9 EMA Plots ────────────────────────────────────────────────────────
+plot(i_show_vwap ? vwap_val : na, "VWAP", color=c_vwap, linewidth=2)
+plot(i_show_9e   ? ema9     : na, "9 EMA", color=c_ema9,  linewidth=1)
+
+// ── Status Table (MCP readable via data_get_pine_tables) ──────────────────────
+var table t = table.new(position.top_right, 3, 13,
+                         bgcolor=color.new(color.black, 15),
+                         border_color=color.new(color.gray, 40), border_width=1,
+                         frame_color=color.new(color.gray, 20), frame_width=2)
+
+f_above(price, level) =>
+    na(level) ? "N/A" : price > level ? "ABOVE" : "BELOW"
+
+f_val(v) =>
+    na(v) ? "N/A" : str.tostring(v, "#.00")
+
+f_cell_color(status) =>
+    status == "ABOVE" ? color.new(color.green, 55) :
+    status == "BELOW" ? color.new(color.red,   65) :
+                        color.new(color.gray,  60)
+
+if barstate.islast
+    p = close
+
+    // Header
+    hdr = color.new(#1a237e, 0)
+    table.cell(t, 0, 0, "LEVEL",  text_color=color.white, bgcolor=hdr, text_size=size.small)
+    table.cell(t, 1, 0, "VALUE",  text_color=color.white, bgcolor=hdr, text_size=size.small)
+    table.cell(t, 2, 0, "STATUS", text_color=color.white, bgcolor=hdr, text_size=size.small)
+
+    // Price row
+    table.cell(t, 0, 1, "PRICE",              text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 1, f_val(p),             text_color=color.yellow, text_size=size.small)
+    vol_str = "RV " + str.tostring(rel_vol, "#.#") + "x" + (high_vol ? " HIGH" : "")
+    table.cell(t, 2, 1, vol_str,              text_color=high_vol ? color.lime : color.silver, text_size=size.small)
+
+    // Level rows
+    rows = array.from("PDH","PDL","PMH","PML","ORH","ORL","VWAP","9 EMA")
+    vals = array.from(f_val(pdh), f_val(pdl), f_val(pmh), f_val(pml),
+                      f_val(orh), f_val(orl), f_val(vwap_val), f_val(ema9))
+    levels_arr = array.from(pdh, pdl, pmh, pml, orh, orl, vwap_val, ema9)
+
+    for i = 0 to 7
+        r     = i + 2
+        lbl   = array.get(rows, i)
+        v     = array.get(vals, i)
+        lvl   = array.get(levels_arr, i)
+        stat  = f_above(p, lvl)
+        sc    = f_cell_color(stat)
+        table.cell(t, 0, r, lbl,  text_color=color.white,          text_size=size.small)
+        table.cell(t, 1, r, v,    text_color=color.white,          text_size=size.small)
+        table.cell(t, 2, r, stat, text_color=color.white, bgcolor=sc, text_size=size.small)
+
+    // Signals fired today
+    sigs = ""
+    if fired_orb,  sigs := sigs + "ORB "
+    if fired_pmh,  sigs := sigs + "PMH "
+    if fired_pdh,  sigs := sigs + "PDH "
+    if fired_vwap, sigs := sigs + "VWAP "
+    if fired_down, sigs := sigs + "BRKDN "
+    sig_display = str.length(sigs) > 0 ? str.trim(sigs) : "NONE"
+
+    // Count bullish levels
+    bull_count = (p > pdh ? 1 : 0) + (p > pmh ? 1 : 0) +
+                 (p > orh ? 1 : 0) + (p > vwap_val ? 1 : 0)
+
+    setup = bull_count >= 4 and fired_orb ? "STRONG BUY" :
+            bull_count >= 3 and (fired_orb or fired_pmh) ? "BUY SETUP" :
+            bull_count >= 2 and fired_vwap ? "WATCH LONG" :
+            fired_down ? "AVOID / SHORT" :
+            bull_count <= 1 ? "BEARISH" : "NEUTRAL"
+
+    setup_col = str.contains(setup, "STRONG") ? color.new(color.green, 10) :
+                str.contains(setup, "BUY")    ? color.new(color.green, 40) :
+                str.contains(setup, "WATCH")  ? color.new(color.orange,40) :
+                str.contains(setup, "AVOID")  ? color.new(color.red, 30) :
+                                                 color.new(color.gray, 50)
+
+    table.cell(t, 0, 10, "SIGNALS", text_color=color.white,               text_size=size.small)
+    table.cell(t, 1, 10, sig_display, text_color=color.yellow,            text_size=size.small)
+    table.cell(t, 2, 10, "",          text_color=color.white,             text_size=size.small)
+
+    table.cell(t, 0, 11, "SETUP",  text_color=color.white,                text_size=size.small)
+    table.cell(t, 1, 11, setup,    text_color=color.white, bgcolor=setup_col, text_size=size.small)
+    table.cell(t, 2, 11, str.tostring(bull_count) + "/4 bull", text_color=color.silver, text_size=size.small)
+
+    table.cell(t, 0, 12, "OR LOCK", text_color=color.silver, text_size=size.tiny)
+    table.cell(t, 1, 12, or_locked ? "YES (" + str.tostring(i_or_min) + "min)" : "FORMING...",
+               text_color=or_locked ? color.lime : color.orange, text_size=size.tiny)
+    table.cell(t, 2, 12, "", text_color=color.silver, text_size=size.tiny)
+
+// ── Alert Conditions ─────────────────────────────────────────────────────────
+alertcondition(orb_breakout,  title="ORB Breakout",
+               message="{{ticker}} ORB BREAKOUT above {{high}} — high volume")
+alertcondition(pmh_breakout,  title="PMH Breakout",
+               message="{{ticker}} PRE-MARKET HIGH BREAKOUT — catalyst play")
+alertcondition(pdh_breakout,  title="PDH Breakout",
+               message="{{ticker}} PREVIOUS DAY HIGH BREAKOUT — momentum continuation")
+alertcondition(vwap_reclaim,  title="VWAP Reclaim",
+               message="{{ticker}} VWAP RECLAIM with volume — long signal")
+alertcondition(orb_breakdown, title="ORB Breakdown",
+               message="{{ticker}} OPENING RANGE BREAKDOWN — exit longs / short signal")
