@@ -1,4 +1,18 @@
-"""Entry point for the trading agent platform."""
+"""Entry point for the trading agent platform.
+
+Daily workflow
+--------------
+1. python main.py discover
+      Morning scan: finds pre-market gappers with catalysts, saves watchlist,
+      sends a notification, then exits. Run this before market open.
+
+2. Open stocks manually in TradingView and review them yourself.
+
+3. python main.py watch
+      Turn on the chart watcher for whatever stock you have open in TradingView.
+      It polls on a configurable interval and notifies you when buy/sell conditions
+      are met. Press Ctrl+C to stop. Only runs when you want it.
+"""
 import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -9,68 +23,72 @@ import asyncio
 import argparse
 import signal
 
-from agents.analysis_agent import AnalysisAgent
 from agents.discovery_agent import DiscoveryAgent
-from agents.trading_agent import TradingAgent
-from agents.orchestrator import Orchestrator
-from brokers.webull import WebullBroker
-from platforms.tradingview import TradingViewClient
+from agents.watcher import ChartWatcher
 
 
-async def run_orchestrator(chart_poll: int) -> None:
-    orch = Orchestrator(chart_fallback_poll=chart_poll)
-
+async def run_watcher(poll: int, min_strength: str, actions: set[str]) -> None:
+    watcher = ChartWatcher(
+        poll_interval=poll,
+        min_strength=min_strength,
+        notify_actions=actions,
+    )
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(sig, orch.stop)
+            loop.add_signal_handler(sig, watcher.stop)
         except NotImplementedError:
-            pass  # Windows doesn't support add_signal_handler for all signals
-
+            pass  # Windows
     try:
-        await orch.run()
-    except asyncio.CancelledError:
-        orch.stop()
-
-
-async def run_single(ticker: str, execute: bool, headless: bool) -> None:
-    """Original single-ticker analysis + optional execution pipeline."""
-    async with TradingViewClient(headless=headless) as tv:
-        signal_obj = await AnalysisAgent().analyze(ticker, tv)
-
-    print(f"Signal: {signal_obj.model_dump_json(indent=2)}")
-
-    if execute:
-        with WebullBroker() as broker:
-            result = TradingAgent(broker).execute(signal_obj)
-            if result:
-                print(f"Order result: {result.model_dump_json(indent=2)}")
-            else:
-                print("Trading agent chose not to execute.")
+        await watcher.run()
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        watcher.stop()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Trading agent platform")
+    parser = argparse.ArgumentParser(
+        description="Trading agent platform",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python main.py discover\n"
+            "  python main.py watch\n"
+            "  python main.py watch --poll 60 --strength strong\n"
+            "  python main.py watch --actions buy,sell,watch\n"
+        ),
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # Morning discovery scan
-    sub.add_parser("discover", help="Find today's pre-market watchlist (run before 'run')")
+    # --- discover ---
+    sub.add_parser(
+        "discover",
+        help="Morning scan: find pre-market gappers, save watchlist, notify, exit",
+    )
 
-    # Multi-agent orchestrator
-    orch_p = sub.add_parser("run", help="Start full multi-agent orchestrator")
-    orch_p.add_argument("--chart-poll", type=int, default=300, help="Chart fallback poll interval in seconds (default 300; chart normally runs on news triggers)")
-
-    # Legacy single-ticker analysis
-    single_p = sub.add_parser("analyze", help="Analyze a single ticker (legacy)")
-    single_p.add_argument("ticker", help="Ticker symbol (e.g. AAPL)")
-    single_p.add_argument("--execute", action="store_true", help="Execute trade via Webull")
-    single_p.add_argument("--headless", action="store_true", help="Run browser headlessly")
+    # --- watch ---
+    watch_p = sub.add_parser(
+        "watch",
+        help="Watch the current TradingView chart and notify on signals (Ctrl+C to stop)",
+    )
+    watch_p.add_argument(
+        "--poll", type=int, default=30,
+        help="Seconds between chart reads (default: 30)",
+    )
+    watch_p.add_argument(
+        "--strength", default="moderate",
+        choices=["weak", "moderate", "strong"],
+        help="Minimum signal strength to trigger a notification (default: moderate)",
+    )
+    watch_p.add_argument(
+        "--actions", default="buy,sell",
+        help="Comma-separated actions that trigger a notification (default: buy,sell)",
+    )
 
     args = parser.parse_args()
 
     if args.command == "discover":
         asyncio.run(DiscoveryAgent().discover())
-    elif args.command == "run":
-        asyncio.run(run_orchestrator(args.chart_poll))
-    elif args.command == "analyze":
-        asyncio.run(run_single(args.ticker, args.execute, args.headless))
+
+    elif args.command == "watch":
+        actions = {a.strip().lower() for a in args.actions.split(",") if a.strip()}
+        asyncio.run(run_watcher(args.poll, args.strength, actions))
