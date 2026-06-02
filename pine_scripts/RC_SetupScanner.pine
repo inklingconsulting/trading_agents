@@ -116,11 +116,16 @@ if session.isfirstbar_regular
     fired_vwap := false
     fired_down := false
 
-if orb_breakout,   fired_orb  := true
-if pmh_breakout,   fired_pmh  := true
-if pdh_breakout,   fired_pdh  := true
-if vwap_reclaim,   fired_vwap := true
-if orb_breakdown,  fired_down := true
+if orb_breakout
+    fired_orb := true
+if pmh_breakout
+    fired_pmh := true
+if pdh_breakout
+    fired_pdh := true
+if vwap_reclaim
+    fired_vwap := true
+if orb_breakdown
+    fired_down := true
 
 // ── Signal Labels on Chart ───────────────────────────────────────────────────
 if orb_breakout
