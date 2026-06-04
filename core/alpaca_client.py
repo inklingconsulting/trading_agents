@@ -72,18 +72,31 @@ class AlpacaScanner:
             )
         resp.raise_for_status()
 
-        gainers = resp.json().get("gainers", [])
+        data     = resp.json()
+        gainers  = data.get("gainers", [])
         results: list[Gapper] = []
+
+        print(
+            f"[AlpacaScanner] Raw response: {len(gainers)} gainers, "
+            f"{len(data.get('losers', []))} losers"
+        )
+        if gainers:
+            top = gainers[0]
+            print(
+                f"[AlpacaScanner] Top raw gainer: {top.get('symbol')} "
+                f"+{top.get('percent_change')}% @ ${top.get('price')} "
+                f"vol {top.get('volume'):,}"
+            )
 
         for item in gainers:
             try:
-                ticker = item.get("symbol", "")
+                ticker  = item.get("symbol", "")
                 if not ticker or len(ticker) > 5:
                     continue
 
-                price    = float(item.get("price", 0))
-                gap_pct  = float(item.get("percent_change", 0))
-                volume   = int(item.get("volume", 0))
+                price   = float(item.get("price", 0))
+                gap_pct = float(item.get("percent_change", 0))
+                volume  = int(item.get("volume", 0))
 
                 if price <= 0 or not (min_price <= price <= max_price):
                     continue
@@ -92,9 +105,7 @@ class AlpacaScanner:
                 if volume < min_volume:
                     continue
 
-                # Reconstruct previous close from price and % change
                 prev_close = round(price / (1 + gap_pct / 100), 2)
-
                 results.append(Gapper(
                     ticker=ticker,
                     price=round(price, 2),

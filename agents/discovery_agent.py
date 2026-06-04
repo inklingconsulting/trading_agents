@@ -116,6 +116,31 @@ class DiscoveryAgent(BaseAgent):
     def __init__(self, model: str = DEFAULT_MODEL):
         super().__init__(model=model)
 
+    async def discover_raw(self) -> None:
+        """Dump raw Alpaca data with no filters — for validating the connection."""
+        from core.alpaca_client import AlpacaScanner
+        if not (settings.alpaca_api_key and settings.alpaca_secret_key):
+            print("[DiscoveryAgent] No Alpaca keys configured.")
+            return
+        scanner = AlpacaScanner(settings.alpaca_api_key, settings.alpaca_secret_key)
+        try:
+            # scan with no filters at all
+            gappers = scanner.scan_gappers(
+                min_gap_pct=0.0,
+                min_price=0.0,
+                max_price=999_999.0,
+                min_volume=0,
+                limit=50,
+            )
+            print(f"\n{'='*60}")
+            print(f"  RAW ALPACA GAINERS — {len(gappers)} results (no filters)")
+            print(f"{'='*60}")
+            for g in gappers:
+                print(f"  {g.ticker:<6} +{g.gap_pct:>6.1f}%  ${g.price:<8.2f}  vol {g.volume:>12,}")
+            print(f"{'='*60}\n")
+        finally:
+            scanner.close()
+
     async def discover(self) -> DailyWatchlist:
         now = datetime.now(tz=EST)
         date_str = now.strftime("%Y-%m-%d")

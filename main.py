@@ -60,9 +60,13 @@ if __name__ == "__main__":
     sub = parser.add_subparsers(dest="command", required=True)
 
     # --- discover ---
-    sub.add_parser(
+    disc_p = sub.add_parser(
         "discover",
         help="Morning scan: find pre-market gappers, save watchlist, notify, exit",
+    )
+    disc_p.add_argument(
+        "--raw", action="store_true",
+        help="Skip all filters — dump everything Alpaca returns (for testing connection)",
     )
 
     # --- watch ---
@@ -87,7 +91,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.command == "discover":
-        asyncio.run(DiscoveryAgent().discover())
+        if getattr(args, "raw", False):
+            asyncio.run(DiscoveryAgent().discover_raw())
+        else:
+            asyncio.run(DiscoveryAgent().discover())
 
     elif args.command == "watch":
         actions = {a.strip().lower() for a in args.actions.split(",") if a.strip()}
