@@ -125,8 +125,14 @@ class DiscoveryAgent(BaseAgent):
 
         if settings.polygon_api_key:
             raw_candidates = await self._polygon_flow(date_str, time_str)
+            if raw_candidates is None:
+                # Polygon failed (e.g. plan too low) — fall back
+                print("[DiscoveryAgent] Falling back to Claude web search...")
+                raw_candidates = await asyncio.get_event_loop().run_in_executor(
+                    None, self._fallback_web_search, date_str, time_str
+                )
         else:
-            print("[DiscoveryAgent] No POLYGON_API_KEY — falling back to Claude web search")
+            print("[DiscoveryAgent] No POLYGON_API_KEY — using Claude web search")
             raw_candidates = await asyncio.get_event_loop().run_in_executor(
                 None, self._fallback_web_search, date_str, time_str
             )
@@ -152,11 +158,14 @@ class DiscoveryAgent(BaseAgent):
 
     # ── Polygon flow ─────────────────────────────────────────────────────────
 
-    async def _polygon_flow(self, date_str: str, time_str: str) -> list[dict]:
+    async def _polygon_flow(self, date_str: str, time_str: str) -> list[dict] | None:
+        """Returns None if Polygon is unavailable (triggers fallback)."""
         loop = asyncio.get_event_loop()
 
         # Step 1: scan for gappers
         gappers = await loop.run_in_executor(None, self._polygon_scan)
+        if gappers is None:
+            return None   # permission error — caller will fall back
         if not gappers:
             print("[DiscoveryAgent] Polygon returned no gappers matching criteria.")
             return []
@@ -185,6 +194,9 @@ class DiscoveryAgent(BaseAgent):
                 print(f"[DiscoveryAgent] Top gapper: {gappers[0].ticker} +{gappers[0].gap_pct}%"
                       f" @ ${gappers[0].price} | vol {gappers[0].volume:,}")
             return [g.__dict__ for g in gappers]
+        except PermissionError as exc:
+            print(f"[DiscoveryAgent] Polygon plan too low: {exc}")
+            return None   # signal to caller to fall back
         except Exception as exc:
             print(f"[DiscoveryAgent] Polygon scan error: {exc}")
             return []

@@ -38,6 +38,11 @@ class PolygonClient:
             f"{_BASE}{path}",
             params={"apiKey": self._key, **params},
         )
+        if resp.status_code == 403:
+            raise PermissionError(
+                "Polygon API key is valid but this endpoint requires a paid plan. "
+                "Upgrade to Stocks Starter ($29/mo) at polygon.io/dashboard."
+            )
         resp.raise_for_status()
         return resp.json()
 
