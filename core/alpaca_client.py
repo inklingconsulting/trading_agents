@@ -4,26 +4,24 @@ Uses Alpaca's free paper-trading data API — no paid subscription needed.
 
 Setup:
   1. Create a free account at alpaca.markets
-  2. Go to paper.alpaca.markets → API Keys → Generate
+  2. Go to paper.alpaca.markets -> API Keys -> Generate
   3. Add ALPACA_API_KEY and ALPACA_SECRET_KEY to .env
 
 Endpoints used:
-  /v1beta1/screener/stocks/movers  — top gainers/losers in real-time
-  /v2/assets/{symbol}              — exchange + tradability info
+  /v1beta1/screener/stocks/movers  -- top gainers/losers in real-time
+  /v2/assets/{symbol}              -- exchange + tradability info
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import time
-from datetime import datetime
+from datetime import datetime, time
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 import httpx
 
-_EST = ZoneInfo("America/New_York")
+_EST         = ZoneInfo("America/New_York")
 _MARKET_OPEN = time(9, 30)
-
 _DATA_BASE   = "https://data.alpaca.markets"
 _BROKER_BASE = "https://paper-api.alpaca.markets"
 
@@ -39,6 +37,54 @@ class Gapper:
     shares_m: Optional[float] = None
     market_cap_m: Optional[float] = None
     exchange: str = ""
+
+
+def _divider(width: int = 62) -> str:
+    return "-" * width
+
+
+def print_raw_table(gainers: list[dict]) -> None:
+    """Print every gapper Alpaca returned before any filtering."""
+    now_str = datetime.now(tz=_EST).strftime("%H:%M EST")
+    is_pm   = datetime.now(tz=_EST).time() < _MARKET_OPEN
+    session = "PRE-MARKET" if is_pm else "REGULAR SESSION"
+
+    print(f"\n{_divider()}")
+    print(f"  ALPACA RAW GAINERS -- {len(gainers)} results ({session} {now_str})")
+    print(f"  {'#':<4} {'TICKER':<7} {'GAP %':>8}  {'PRICE':>8}  {'PREV CLOSE':>10}  {'VOLUME':>12}")
+    print(_divider())
+    for i, g in enumerate(gainers, 1):
+        price   = float(g.get("price") or 0)
+        gap_pct = float(g.get("percent_change") or 0)
+        vol     = int(g.get("volume") or 0)
+        prev    = round(price / (1 + gap_pct / 100), 2) if gap_pct != -100 else 0
+        vol_str = f"{vol:,}" if vol else ("pre-mkt" if is_pm else "0")
+        print(
+            f"  {i:<4} {g.get('symbol',''):<7} {gap_pct:>+7.1f}%  "
+            f"${price:>7.2f}  ${prev:>9.2f}  {vol_str:>12}"
+        )
+    print(_divider())
+
+
+def print_filtered_table(gappers: list[Gapper], min_gap: float, max_price: float) -> None:
+    """Print candidates that passed the price and gap % filter."""
+    print(f"\n{_divider()}")
+    print(
+        f"  AFTER FILTER (gap >={min_gap:.0f}%, price $1-${max_price:.0f})"
+        f" -- {len(gappers)} candidates"
+    )
+    if not gappers:
+        print("  (none passed -- consider lowering DISCOVERY_MIN_GAP_PCT)")
+        print(_divider())
+        return
+    print(f"  {'#':<4} {'TICKER':<7} {'GAP %':>8}  {'PRICE':>8}  {'PREV CLOSE':>10}")
+    print(_divider())
+    for i, g in enumerate(gappers, 1):
+        print(
+            f"  {i:<4} {g.ticker:<7} {g.gap_pct:>+7.1f}%  "
+            f"${g.price:>7.2f}  ${g.prev_close:>9.2f}"
+        )
+    print(_divider())
 
 
 class AlpacaScanner:
@@ -58,42 +104,28 @@ class AlpacaScanner:
         min_volume: int = 10_000,
         limit: int = 40,
     ) -> list[Gapper]:
-        """Return top gainers matching day-trading universe criteria.
-
-        Uses Alpaca's screener/movers endpoint which reflects real-time
-        price changes from previous close, including pre-market moves.
-        """
+        """Return top gainers matching day-trading universe criteria."""
         resp = self._http.get(
             f"{_DATA_BASE}/v1beta1/screener/stocks/movers",
             params={"top": 50},
         )
         if resp.status_code == 403:
             raise PermissionError(
-                "Alpaca API key rejected. Make sure you're using keys from "
-                "paper.alpaca.markets (not a deleted/invalid key)."
+                "Alpaca API key rejected. Use keys from paper.alpaca.markets."
             )
         if not resp.is_success:
             raise RuntimeError(
-                f"Alpaca movers endpoint returned {resp.status_code}: {resp.text[:300]}"
+                f"Alpaca movers returned {resp.status_code}: {resp.text[:300]}"
             )
-        resp.raise_for_status()
 
-        data     = resp.json()
-        gainers  = data.get("gainers", [])
+        data    = resp.json()
+        gainers = data.get("gainers", [])
+
+        # Always print the full raw table so you can see the landscape
+        print_raw_table(gainers)
+
+        is_premarket = datetime.now(tz=_EST).time() < _MARKET_OPEN
         results: list[Gapper] = []
-
-        print(
-            f"[AlpacaScanner] Raw response: {len(gainers)} gainers, "
-            f"{len(data.get('losers', []))} losers"
-        )
-        if gainers:
-            top = gainers[0]
-            vol = top.get("volume") or 0
-            print(
-                f"[AlpacaScanner] Top raw gainer: {top.get('symbol')} "
-                f"+{top.get('percent_change')}% @ ${top.get('price')} "
-                f"vol {vol:,}"
-            )
 
         for item in gainers:
             try:
@@ -109,9 +141,7 @@ class AlpacaScanner:
                     continue
                 if gap_pct < min_gap_pct:
                     continue
-                # Volume is always 0 pre-market (regular session hasn't opened).
-                # Only apply the volume filter once the market is open.
-                is_premarket = datetime.now(tz=_EST).time() < _MARKET_OPEN
+                # Volume is 0 pre-market — only apply this filter once open
                 if not is_premarket and volume < min_volume:
                     continue
 
@@ -127,7 +157,12 @@ class AlpacaScanner:
                 continue
 
         results.sort(key=lambda g: g.gap_pct, reverse=True)
-        return results[:limit]
+        results = results[:limit]
+
+        # Print filtered table
+        print_filtered_table(results, min_gap_pct, max_price)
+
+        return results
 
     def get_asset_details(self, ticker: str) -> dict:
         """Return exchange and tradability info for a ticker."""
@@ -139,7 +174,7 @@ class AlpacaScanner:
                 "exchange": data.get("exchange", ""),
                 "tradable": data.get("tradable", True),
                 "shortable": data.get("shortable", False),
-                "type": data.get("class", ""),
+                "type":     data.get("class", ""),
             }
         except Exception:
             return {}

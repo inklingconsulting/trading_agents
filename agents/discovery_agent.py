@@ -240,6 +240,10 @@ class DiscoveryAgent(BaseAgent):
                 kept.append(g)
         finally:
             scanner.close()
+
+        dropped = len(gappers) - len(kept)
+        if dropped:
+            print(f"[DiscoveryAgent] Exchange filter: removed {dropped} non-equity/OTC tickers, {len(kept)} remain")
         return kept
 
     # ── Polygon flow ─────────────────────────────────────────────────────────
@@ -424,10 +428,31 @@ class DiscoveryAgent(BaseAgent):
         print(f"[DiscoveryAgent] Watchlist saved -> {WATCHLIST_PATH}")
 
     def _print_summary(self, watchlist: DailyWatchlist) -> None:
-        bar = "=" * 62
+        W   = 72
+        bar = "=" * W
+        div = "-" * W
         print(f"\n{bar}")
-        print(f"  TODAY'S WATCHLIST  {watchlist.date}")
-        print(f"{bar}")
+        print(f"  TODAY'S WATCHLIST  {watchlist.date}  ({len(watchlist.candidates)} candidates)")
+        print(bar)
+
+        priority_tag = {"high": "[!!!]", "medium": "[!] ", "low": "[ ] "}.get
+
         for c in watchlist.candidates:
-            print(f"  {c.summary_line()}")
+            tag   = priority_tag(c.priority.value if c.priority else "medium", "[!] ")
+            gap   = f"+{c.gap_pct:.1f}%" if c.gap_pct else ""
+            price = f"${c.price:.2f}"    if c.price   else ""
+            fl    = f"float {c.float_m:.1f}M" if c.float_m else ""
+            mcap  = f"mcap ${c.market_cap_m:.0f}M" if c.market_cap_m else ""
+            meta  = "  ".join(x for x in [gap, price, fl, mcap] if x)
+
+            print(div)
+            print(f"  {tag} #{c.rank}  {c.ticker}  |  {meta}")
+            if c.catalyst:
+                src = f" ({c.catalyst_source})" if c.catalyst_source else ""
+                print(f"       Catalyst: {c.catalyst[:65]}{src}")
+            if c.rationale:
+                print(f"       Why:      {c.rationale[:65]}")
+
+        print(bar)
+        print(f"  Pull up in TradingView: {', '.join(watchlist.watchlist)}")
         print(f"{bar}\n")
