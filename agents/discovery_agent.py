@@ -148,20 +148,15 @@ class DiscoveryAgent(BaseAgent):
 
         print(f"[DiscoveryAgent] Scanning pre-market at {time_str} EST...")
 
-        raw_candidates = None
+        if not (settings.alpaca_api_key and settings.alpaca_secret_key):
+            print("[DiscoveryAgent] No ALPACA_API_KEY / ALPACA_SECRET_KEY in .env — stopping.")
+            return DailyWatchlist(date=date_str)
 
-        if settings.alpaca_api_key and settings.alpaca_secret_key:
-            raw_candidates = await self._alpaca_flow(date_str, time_str)
-
-        if raw_candidates is None and settings.polygon_api_key:
-            print("[DiscoveryAgent] Trying Polygon...")
-            raw_candidates = await self._polygon_flow(date_str, time_str)
+        raw_candidates = await self._alpaca_flow(date_str, time_str)
 
         if raw_candidates is None:
-            print("[DiscoveryAgent] No market data API configured — using Claude web search")
-            raw_candidates = await asyncio.get_event_loop().run_in_executor(
-                None, self._fallback_web_search, date_str, time_str
-            )
+            print("[DiscoveryAgent] Alpaca scan failed — check error above.")
+            return DailyWatchlist(date=date_str)
 
         if not raw_candidates:
             print("[DiscoveryAgent] No candidates found.")
