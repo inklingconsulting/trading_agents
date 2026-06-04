@@ -59,12 +59,16 @@ class AlpacaScanner:
         """
         resp = self._http.get(
             f"{_DATA_BASE}/v1beta1/screener/stocks/movers",
-            params={"top": 50, "market_type": "stocks"},
+            params={"top": 50},
         )
         if resp.status_code == 403:
             raise PermissionError(
                 "Alpaca API key rejected. Make sure you're using keys from "
                 "paper.alpaca.markets (not a deleted/invalid key)."
+            )
+        if not resp.is_success:
+            raise RuntimeError(
+                f"Alpaca movers endpoint returned {resp.status_code}: {resp.text[:300]}"
             )
         resp.raise_for_status()
 
