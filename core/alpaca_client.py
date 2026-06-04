@@ -14,9 +14,15 @@ Endpoints used:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import time
+from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import httpx
+
+_EST = ZoneInfo("America/New_York")
+_MARKET_OPEN = time(9, 30)
 
 _DATA_BASE   = "https://data.alpaca.markets"
 _BROKER_BASE = "https://paper-api.alpaca.markets"
@@ -103,7 +109,10 @@ class AlpacaScanner:
                     continue
                 if gap_pct < min_gap_pct:
                     continue
-                if volume < min_volume:
+                # Volume is always 0 pre-market (regular session hasn't opened).
+                # Only apply the volume filter once the market is open.
+                is_premarket = datetime.now(tz=_EST).time() < _MARKET_OPEN
+                if not is_premarket and volume < min_volume:
                     continue
 
                 prev_close = round(price / (1 + gap_pct / 100), 2)
