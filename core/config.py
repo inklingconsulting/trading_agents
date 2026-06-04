@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # TradingView MCP server (Node.js)
     tradingview_mcp_path: str = r"C:\_repo\tradingview_mcp_jackson"
 
+    # Polygon.io market data
+    polygon_api_key: str = ""
+    discovery_min_gap_pct: float = 10.0       # minimum pre-market gap % to consider
+    discovery_min_volume: int = 10_000         # minimum pre-market share volume
+    discovery_max_candidates: int = 40         # max gappers sent to Claude for ranking
+
     # Notifications
     ntfy_topic: str = ""   # set to enable phone push via ntfy.sh (e.g. "my-trading-alerts")
 
