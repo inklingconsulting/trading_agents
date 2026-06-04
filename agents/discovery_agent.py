@@ -123,16 +123,17 @@ class DiscoveryAgent(BaseAgent):
 
         print(f"[DiscoveryAgent] Scanning pre-market at {time_str} EST...")
 
-        if settings.polygon_api_key:
+        raw_candidates = None
+
+        if settings.alpaca_api_key and settings.alpaca_secret_key:
+            raw_candidates = await self._alpaca_flow(date_str, time_str)
+
+        if raw_candidates is None and settings.polygon_api_key:
+            print("[DiscoveryAgent] Trying Polygon...")
             raw_candidates = await self._polygon_flow(date_str, time_str)
-            if raw_candidates is None:
-                # Polygon failed (e.g. plan too low) — fall back
-                print("[DiscoveryAgent] Falling back to Claude web search...")
-                raw_candidates = await asyncio.get_event_loop().run_in_executor(
-                    None, self._fallback_web_search, date_str, time_str
-                )
-        else:
-            print("[DiscoveryAgent] No POLYGON_API_KEY — using Claude web search")
+
+        if raw_candidates is None:
+            print("[DiscoveryAgent] No market data API configured — using Claude web search")
             raw_candidates = await asyncio.get_event_loop().run_in_executor(
                 None, self._fallback_web_search, date_str, time_str
             )
@@ -155,6 +156,71 @@ class DiscoveryAgent(BaseAgent):
         self._print_summary(result)
         send_watchlist_ready(watchlist, date_str, len(candidates))
         return result
+
+    # ── Alpaca flow ──────────────────────────────────────────────────────────
+
+    async def _alpaca_flow(self, date_str: str, time_str: str) -> list[dict] | None:
+        """Returns None if Alpaca is unavailable (triggers next fallback)."""
+        loop = asyncio.get_event_loop()
+
+        gappers = await loop.run_in_executor(None, self._alpaca_scan)
+        if gappers is None:
+            return None
+        if not gappers:
+            print("[DiscoveryAgent] Alpaca returned no gappers matching criteria.")
+            return []
+
+        print(f"[DiscoveryAgent] Alpaca found {len(gappers)} gappers — filtering by exchange...")
+        gappers = await loop.run_in_executor(None, self._alpaca_enrich, gappers)
+
+        print(f"[DiscoveryAgent] {len(gappers)} candidates after filter — finding catalysts...")
+        return await loop.run_in_executor(None, self._find_catalysts, gappers, date_str, time_str)
+
+    def _alpaca_scan(self) -> list[dict] | None:
+        from core.alpaca_client import AlpacaScanner
+        scanner = AlpacaScanner(settings.alpaca_api_key, settings.alpaca_secret_key)
+        try:
+            gappers = scanner.scan_gappers(
+                min_gap_pct=settings.discovery_min_gap_pct,
+                min_price=1.0,
+                max_price=settings.news_max_price,
+                min_volume=settings.discovery_min_volume,
+                limit=settings.discovery_max_candidates,
+            )
+            if gappers:
+                print(
+                    f"[DiscoveryAgent] Alpaca top gapper: {gappers[0].ticker} "
+                    f"+{gappers[0].gap_pct}% @ ${gappers[0].price} | vol {gappers[0].volume:,}"
+                )
+            return [g.__dict__ for g in gappers]
+        except PermissionError as exc:
+            print(f"[DiscoveryAgent] Alpaca auth error: {exc}")
+            return None
+        except Exception as exc:
+            print(f"[DiscoveryAgent] Alpaca scan error: {exc}")
+            return None
+        finally:
+            scanner.close()
+
+    def _alpaca_enrich(self, gappers: list[dict]) -> list[dict]:
+        """Filter out non-US-exchange and untradable assets via Alpaca asset details."""
+        from core.alpaca_client import AlpacaScanner
+        scanner = AlpacaScanner(settings.alpaca_api_key, settings.alpaca_secret_key)
+        kept = []
+        try:
+            for g in gappers:
+                details = scanner.get_asset_details(g["ticker"])
+                # Skip non-equity asset classes (crypto, ETF, etc.)
+                if details.get("type") not in ("us_equity", ""):
+                    continue
+                # Skip if not tradable (halted, delisted, etc.)
+                if details and not details.get("tradable", True):
+                    continue
+                g["exchange"] = details.get("exchange", "")
+                kept.append(g)
+        finally:
+            scanner.close()
+        return kept
 
     # ── Polygon flow ─────────────────────────────────────────────────────────
 

@@ -29,7 +29,11 @@ class Settings(BaseSettings):
     # TradingView MCP server (Node.js)
     tradingview_mcp_path: str = r"C:\_repo\tradingview_mcp_jackson"
 
-    # Polygon.io market data
+    # Alpaca Markets — free paper-trading account gives real-time data access
+    alpaca_api_key: str = ""
+    alpaca_secret_key: str = ""
+
+    # Polygon.io market data (paid, ~$29+/mo — used if Alpaca not configured)
     polygon_api_key: str = ""
     discovery_min_gap_pct: float = 10.0       # minimum pre-market gap % to consider
     discovery_min_volume: int = 10_000         # minimum pre-market share volume
